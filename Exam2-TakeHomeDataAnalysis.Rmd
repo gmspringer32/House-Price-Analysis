@@ -1,0 +1,377 @@
+---
+title: "Exam 2"
+subtitle: <center> <h1>Take-Home Data Analysis</h1> </center>
+author: <center> Garrett Springer <center>
+output: html_document
+---
+
+<style type="text/css">
+h1.title {
+  font-size: 40px;
+  text-align: center;
+}
+</style>
+
+
+```{r setup, include=FALSE}
+# load any necessary packages here
+library(tidyverse)
+library(dplyr)
+library(corrplot)
+library(gridExtra)
+library(glmnet)
+library(bestglm)
+library(ggfortify)
+library(car)
+```
+
+## Exam Instructions
+
+Use this .rmd file to perform your analysis. You will answer questions about this data set through a Canvas Quiz. You will then submit your completed .rmd and .html file at the end of the Canvas quiz. Your code should be organized, properly formatted, and you should only print out relevant items (e.g. do not print out the entire data set for me to see, and do not use the `View()` function).
+
+## Data and Description
+
+Researchers collected data on 414 homes in China. The goal is to use rather unique explanatory variables to predict house price (measured in cost (US Dollars) per unit area). The following are predictor variables:
+
+Variable | Description
+-------- | -------------------------
+age      | Age of the house (number of years since being built) in years
+stores   | Number of convenience stores within a 500 meter circle around the house
+metro    | Distance from the house to the nearest metro station (in meters) 
+trails   | Distance from the house to the nearest walking trail (in meters) 
+
+Download the RealEstate.txt file from Canvas (Files -> DATA SETS), and put it in the same folder as this R Markdown file.
+
+### Complete your exploratory data analysis (EDA) in this section. You may use multiple code chunks, if you wish, to organize your code.
+
+```{r}
+realEstate <- read_table("RealEstate.txt")
+summary(realEstate)
+realEstate <- realEstate[,c(2,1,3,4,5)]
+
+realEstate %>% 
+  group_by(stores) %>% 
+  summarise(var_price = var(price)) %>% 
+  arrange(var_price)
+
+plot(realEstate)
+corrplot(cor(realEstate), type = "upper")
+cor(realEstate)
+```
+
+### Fit an inital model, and check the "(A) no influential points" assumption in this section. You may use multiple code chunks, if you wish, to organize your code.
+
+```{r}
+lm_realEstate <- lm(realEstate)
+summary(lm_realEstate)
+```
+
+
+```{r}
+calc_df_betas <- function(df, value_string, lm){
+  
+  df$dfbetas_value_string <- as.vector(dfbetas(lm)[, value_string])
+  
+  thing <- df %>% 
+    mutate(rowNum = row.names(df)) %>%  
+    filter(abs(dfbetas_value_string) > 2 * sqrt(length(lm$coefficients) / 
+                                    length(dfbetas_value_string))) %>%
+    arrange(desc(abs(dfbetas_value_string)))
+  
+  
+  print(paste("dfbetas for", value_string))
+  print(thing)
+  
+  #PLOT
+  y_lab <- paste("Abs(DFBETAS) for ", value_string)
+  
+  ggplot(data = df) + 
+  geom_point(mapping = aes(x = as.numeric(rownames(df)), 
+                           y = abs(dfbetas_value_string))) +
+  ylab(y_lab) +
+  xlab("Observation Number") +
+  # for n > 30
+  geom_hline(mapping = aes(yintercept = 2 / sqrt(length(dfbetas_value_string))),
+             color = "red", 
+             linetype = "dashed") + 
+  # for n <= 30
+  geom_hline(mapping = aes(yintercept = 1),
+             color = "red", 
+             linetype = "dashed") +
+  theme(aspect.ratio = 1)
+  
+}
+
+
+dfBetas_age <- calc_df_betas(realEstate, "age", lm_realEstate)
+dfBetas_stores <- calc_df_betas(realEstate, "stores", lm_realEstate)
+dfBetas_metro <- calc_df_betas(realEstate, "metro", lm_realEstate)
+dfBetas_trails <- calc_df_betas(realEstate, "trails", lm_realEstate)
+
+grid.arrange(dfBetas_age, dfBetas_metro, dfBetas_stores, dfBetas_trails)
+
+```
+```{r}
+calc_df_fits <- function(df, lm){
+  
+    df$dffits <- dffits(lm)
+  
+  plot <- ggplot(data = df) + 
+    geom_point(mapping = aes(x = as.numeric(rownames(df)), 
+                             y = abs(dffits))) +
+    ylab("Absolute Value of DFFITS for Y") +
+    xlab("Observation Number") +
+    geom_hline(mapping = aes(yintercept = 2 *  sqrt(length(lm$coefficients) / length(dffits))),
+               color = "red", 
+               linetype = "dashed") +
+    theme(aspect.ratio = 1) + 
+    labs(title = "DFFITS plot")
+  
+  thing <- df %>% 
+    mutate(rowNum = row.names(df)) %>%  
+    filter(abs(dffits) > 2 * sqrt(length(lm$coefficients) / 
+                                    length(dffits))) %>%
+    arrange(desc(abs(dffits)))
+  
+  out <- list(plot, thing)
+  return(out)
+  
+}
+
+
+calc_df_fits(realEstate, lm_realEstate)
+```
+
+It looks like the data value at row 271 is definitely an influential point. The dffits shows that influential point, and the dfbetas show observation number 271 as an influential point on plots for metro and store. This assumption is not met
+
+
+### Fit a model on a new data set where the one influential point is removed, and check the "no multicollinearity" assumption, in this section. You may use multiple code chunks, if you wish, to organize your code.
+
+```{r}
+realEstate_new <- realEstate[-271,]
+lm_realEstate_new <- lm(realEstate_new)
+
+
+dfBetas_age <- calc_df_betas(realEstate_new, "age", lm_realEstate_new)
+dfBetas_stores <- calc_df_betas(realEstate_new, "stores", lm_realEstate_new)
+dfBetas_metro <- calc_df_betas(realEstate_new, "metro", lm_realEstate_new)
+dfBetas_trails <- calc_df_betas(realEstate_new, "trails", lm_realEstate_new)
+
+grid.arrange(dfBetas_age, dfBetas_metro, dfBetas_stores, dfBetas_trails)
+
+calc_df_fits(realEstate_new, lm_realEstate_new)
+
+```
+
+With the influential point removed, the no influential points assumption is met. The dffits and dfbetas plots show no influential points 
+
+```{r}
+plot(realEstate_new)
+corrplot(cor(realEstate_new), type = "upper")
+vif(lm_realEstate_new)
+```
+
+The no multicolineaerioty assumption is not met. We can see a multicollinearity issue between metro and trails on the correlation matrix and the scatterplot matrix shows that relationship too. The VIFs are not super big but the average of all of them is greater than 1 so that also shows a problem
+
+
+### Fit another model (on the new data set where the one influential point is removed) with the age variable square rooted (do not use the original age variable) in this section. 
+
+```{r}
+realEstate_sqrtage <- realEstate_new %>% 
+  mutate(age = sqrt(age))
+
+
+lm_realEstate_sqrtage <- lm(realEstate_sqrtage)
+
+summary(lm_realEstate_sqrtage)
+realEstate_sqrtage <- realEstate_sqrtage[,c(2,3,4,5,1)]
+```
+
+### Perform variable selection in this section. You may use multiple code chunks, if you wish, to organize your code.
+
+```{r}
+# convert from tibble to dataframe for varibale selection
+
+realEstate_sqrtage <- as.data.frame(realEstate_sqrtage)
+
+
+
+#lasso
+lasso <- function(df){
+  col <- ncol(df)
+  df_x <- as.matrix(df[, 1:col -1])
+  df_y <- df[,col]
+
+  # use cross validation to pick the "best" (based on MSE) lambda
+  df_ridge_cv <- cv.glmnet(x = df_x,
+                            y = df_y, 
+                            type.measure = "mse", 
+                            alpha = 1) 
+  df_ridge_cv$lambda.1se
+  coef(df_ridge_cv, s = "lambda.1se")
+}
+
+print("LASSO")
+print(lasso(realEstate_sqrtage))
+
+
+
+#best subsets
+best_subsets <- bestglm(realEstate_sqrtage,
+                IC = "BIC",
+                method = "exhaustive")
+
+
+print("Best Subsets")
+print(summary(best_subsets$BestModel))
+
+
+#elastic net
+elasticNet <- function(df){
+  col <- ncol(df)
+  df_x <- as.matrix(df[, 1:col -1])
+  df_y <- df[,col]
+  df_ridge_cv <- cv.glmnet(x = df_x,
+                            y = df_y, 
+                            type.measure = "mse", 
+                            alpha = .5) 
+  df_ridge_cv$lambda.1se
+  coef(df_ridge_cv, s = "lambda.1se")
+}
+
+print("Elastic Net")
+print(elasticNet(realEstate_sqrtage))
+```
+
+All three of those models exclude trails and include age, stores, and metro in the model. Therefore I will use age stores and metro in my model.
+
+### Fit a model with any variables removed that you deem unnecesary for the model in this section.
+
+```{r}
+lm_realEstate <- lm(realEstate_sqrtage %>% select(price, age, stores, metro))
+summary(lm_realEstate)
+```
+
+### Determine if any interaction(s) are needed for this model in this section. You may use multiple code chunks, if you wish, to organize your code.
+
+```{r}
+lm_realEstate_int_all <- lm(price ~ age*stores + age*metro + metro*stores, 
+                            data = realEstate_sqrtage)
+
+lm_realEstate_int_stores <- lm(price ~ age*stores + metro*stores, 
+                               data =realEstate_sqrtage)
+lm_realEstate_int_age <-  lm(price ~ age*metro + age*stores,
+                             data = realEstate_sqrtage)
+lm_realEstate_int_metro <- lm(price ~ age*metro + metro*stores,
+                              data = realEstate_sqrtage)
+
+summary(lm_realEstate_int_all)
+
+```
+```{r}
+anova(lm_realEstate_sqrtage, lm_realEstate_int_all)
+#all interactions is better than none
+anova(lm_realEstate_int_all, lm_realEstate_int_age)
+anova(lm_realEstate_int_all, lm_realEstate_int_stores)
+anova(lm_realEstate_int_all, lm_realEstate_int_metro)
+#just interaction between metro and age and metro and stores is better
+
+anova(lm_realEstate_sqrtage, lm_realEstate_int_metro)
+summary(lm_realEstate_int_metro)
+realEstate_sqrtage$residuals <- lm_realEstate_int_metro$residuals
+```
+First I tested all possible interactions, that did better than the original model. Then the only test that produces a large pvalue when compared to the model with all interactions is the one with only a metro interactions with the others. So that means that compared to a model with just interactions between metro and store and metro and age, the model with all interactions does worse. 
+
+### Complete statistical inference based on the best linear model you chose in this section. You may use multiple code chunks, if you wish, to organize your code.
+
+#### Check assumptions
+
+##### Linearity
+
+```{r}
+#partial regression
+avPlots(lm_realEstate_int_metro)
+
+#scatterplot
+plot(realEstate_sqrtage %>% select(price, age, stores, metro))
+```
+I would say this assumption is met. Accoring to the partial regression plot (which shows linearity in the plots) and the scatterplot matrix which also shows linearity. 
+
+##### Independance
+This is met. I would say that the variables do not effect how the others are collected
+
+##### Normaility
+
+```{r}
+check_normality <- function(df, lm){
+  # boxplot
+  boxplot <- ggplot(df, mapping = aes(x = residuals)) +
+  geom_boxplot()+
+  theme(aspect.ratio = 1)
+  
+  # histogram
+  hist <- df %>% 
+  ggplot() +
+  geom_histogram(mapping = aes(x = residuals, y = ..density..)) +
+  stat_function(fun = dnorm, color = "red", size = 2,
+                args = list(mean = mean(df$residuals),
+                            sd = sd(df$residuals))) +
+  theme(aspect.ratio = 1)
+  
+  
+  #qqplot
+  qqplot <- autoplot(lm, which = 2, ncol = 1, nrow = 1) +
+  theme(aspect.ratio = 1)
+  
+  # shapiro-wilk
+  shapwilk <- shapiro.test(lm$residuals)
+  
+  out <- list(boxplot, hist, qqplot, shapwilk)
+  
+  return(out)
+}
+
+check_normality(realEstate_sqrtage %>% select(price, age, stores, metro, residuals), lm_realEstate_int_metro)
+
+```
+
+I will assume that this assumption is met. While the qqplot shows some deviation on the ends, the histogram and boxplot show general normality. And while the shapiro wilk test gives evidence to say that it is not normally distributed, we will go on with our analysis. 
+
+##### Equal Variance
+```{r}
+autoplot(lm_realEstate_int_metro, which = 1, ncol = 1, nrow = 1) +
+  theme(aspect.ratio = 1)
+```
+This assumption is met, the points create a cloudlike shape.
+
+##### No influential points
+```{r}
+dfBetas_age <- calc_df_betas(realEstate_sqrtage, "age", lm_realEstate_int_metro)
+dfBetas_stores <- calc_df_betas(realEstate_sqrtage, "stores", lm_realEstate_int_metro)
+dfBetas_metro <- calc_df_betas(realEstate_sqrtage, "metro", lm_realEstate_int_metro)
+
+grid.arrange(dfBetas_age, dfBetas_metro, dfBetas_stores)
+
+calc_df_fits(realEstate_sqrtage, lm_realEstate_int_metro)
+```
+This assumption is met. There appear to be no influential points that stick out.
+
+
+##### Multicolinearity
+```{r}
+plot(realEstate_sqrtage %>% select(price, age, stores, metro))
+corrplot(cor(realEstate_sqrtage %>% select(price, age, stores, metro)), type = "upper")
+vif(lm_realEstate_int_metro, type = "predictor")
+vif(lm_realEstate_sqrtage)
+```
+
+This is interesting. While the model with the interaction of metro and store and metro and age produced a better model, there is extreme multicolinearity issues. This might be because of the interaction term. If we deem the interaction important, we can keep it in the model. If not, we could keep the model more basic. For right now I will assume that it is not met for the interaction model, and met for the basic model.
+
+
+```{r}
+predict(lm_realEstate_int_metro, interval = "confidence", 
+        newdata =data.frame(age = 20, stores = 3, metro = 500))
+```
+
+#### Conclusion
+Based on these findings, we can conclude that we can predict house price using age of the house (number of years since being built) in years, number of convenience stores within a 500 meter circle around the house, and distance from the house to the nearest metro station (in meters). If we decide to use the model with the interaction terms, the amount the average house prive changes based on age and stores depends on metros. 
